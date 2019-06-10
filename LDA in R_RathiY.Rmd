@@ -1,0 +1,140 @@
+---
+title: "LDA"
+author: "Yashvardhan Rathi"
+date: "November 15, 2018"
+output: html_document
+---
+###Load Library.
+```{r}
+library(dplyr)
+library(gains)
+library(MASS)
+library(ggplot2)
+library(caret)
+library(tidyverse)
+library(lattice)
+```
+###Read the data.
+```{r}
+spambase.df <- read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", 
+                            header = FALSE,
+                            sep = ",")
+head(spambase.df)
+```
+#1
+
+###  We need to normalize the data before running the algorithms.
+```{r}
+normalized_values <- preProcess(spambase.df[,-58], method = c("center", "scale"))
+```
+### Transform the dataset using the parameters.
+```{r}
+spam_normal.df <- predict(normalized_values, spambase.df)
+```
+### Spam_email denotes whether the e-mail was considered spam (1) or not (0)
+### Changing the name of the variables
+```{r}
+names(spam_normal.df) <- c("word_freq_make","word_freq_address","word_freq_all","word_freq_3d","word_freq_our","word_freq_over","word_freq_remove","word_freq_internet","word_freq_order","word_freq_mail","word_freq_receive","word_freq_will","word_freq_people","word_freq_report","word_freq_addresses","word_freq_free","word_freq_business","word_freq_email","word_freq_you","word_freq_credit","word_freq_your","word_freq_font","word_freq_000","word_freq_money","word_freq_hp","word_freq_hpl","word_freq_george","word_freq_650","word_freq_lab","word_freq_labs","word_freq_telnet","word_freq_857","word_freq_data","word_freq_415","word_freq_85","word_freq_technology","word_freq_1999","word_freq_parts","word_freq_pm","word_freq_direct","word_freq_cs","word_freq_meeting","word_freq_original","word_freq_project","word_freq_re","word_freq_edu","word_freq_table","word_freq_conference","char_freq_;","char_freq_(","char_freq_[","char_freq_exclamation","char_freq_dollar","char_freq_#","capital_run_length_average","capital_run_length_longest","capital_run_length_total","Spam_email")
+```
+##Take a mean of the spam class and non-spam class.
+```{r}
+agg_mean <- aggregate(spam_normal.df[,1:57],list(spam_normal.df$Spam_email), mean)
+agg_mean
+```
+###We remove the extra column name added i.e Group.1
+```{r}
+agg_mean1 <- agg_mean[,-1]
+agg_mean1
+```
+### Differentiate the records into spam class and non spam class.
+```{r}
+spammail.df <- spam_normal.df[spam_normal.df$Spam_email == 1,]
+email.df <- spam_normal.df[spam_normal.df$Spam_email == 0,]
+summary(spammail.df)
+summary(email.df)
+```
+###Now we find the difference between spam class mean and non spam class mean.
+```{r}
+Difference_mean <- abs(agg_mean1[1,]-agg_mean1[2,])
+Difference_mean
+```
+### Identifiy the top 10 predictors for which the difference_mean is highest.
+```{r}
+Top10_pred<- head(t(sort(Difference_mean, decreasing = TRUE)),10)
+Top10_pred
+```
+#2
+
+
+### Split the spambase_new.df into training (80%) and validation set (20%)
+```{r}
+set.seed(666)
+spambase_partition<- createDataPartition(spam_normal.df$Spam_email, p = 0.8, list = FALSE)
+training.df <- spam_normal.df[spambase_partition, ]
+validation.df <- spam_normal.df[-spambase_partition, ]
+```
+
+
+### Run LDA
+```{r}
+LDA <- lda(Spam_email ~ word_freq_your + word_freq_000 + word_freq_remove + char_freq_dollar +  word_freq_you + word_freq_free + word_freq_business + word_freq_hp + capital_run_length_total + word_freq_our,data = training.df)
+# output
+LDA
+```
+### Predict propensities
+```{r}
+LDA_pred <- predict(LDA, validation.df)
+```
+#3 
+###Check Model using Confusion Matrix and test accuracy 
+```{r}
+table(LDA_pred$class, validation.df$Spam_email) 
+confusionMatrix(as.factor(LDA_pred$class),as.factor(validation.df$Spam_email))
+Percent_accuracy <- mean(LDA_pred$class == validation.df$Spam_email)
+Percent_accuracy <- Percent_accuracy*100
+Percent_accuracy
+
+```
+## By looking at the confusion matrix we can see that the model is `r Percent_accuracy` accurate. 
+
+### Cumulative lift chart
+```{r}
+
+gain <- gains(as.numeric(validation.df$Spam_email), LDA_pred$x[,1], groups = 10)
+
+str(LDA_pred$posterior)
+
+options(scipen=999)
+### Compute gains relative to price
+spam_c<- as.numeric(validation.df$Spam_email)
+plot(c(0,gain$cume.pct.of.total*sum(spam_c))~c(0,gain$cume.obs), 
+     xlab="# cases", ylab="Cumulative", main="Lift Chart", 
+     col = "blue1", type="l")
+### baseline
+lines(c(0,sum(spam_c))~c(0, dim(validation.df)[1]), lty = 5)
+```
+
+
+##Looking at the lift curve, it tells us that if we select the top 400 records we would be right for about 320 of them. The more the area under the curve, the better is our model.
+
+### Plot decile-wise chart
+```{r}
+heights <- gain$mean.resp/mean(validation.df$Spam_email)
+midpoints <- barplot(heights, names.arg = gain$depth,  ylim = c(0,4), col = "blue",  
+                     xlab = "Percentile", ylab = "Mean Response", 
+                     main = "Decile-wise lift chart")
+    ### add labels to columns
+text(midpoints, heights+0.5, labels=round(heights, 1), cex = 0.7)
+
+
+```
+
+
+
+##Looking at the decile chart we see that for the top 10% of the records the model is 2.5 times better at spam detection than a random selection of 10% of records. 
+##In our graph, the decile chart indicates that we can even use the model to select the top 20% records with the highest propensities and still perform 2.5 times as well as random.
+
+
+
+
+
